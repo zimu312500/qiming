@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"sort"
 	"strconv"
 	"strings"
 	"qiming/utils"
@@ -19,19 +18,17 @@ var (
 	xing    = "李"
 	genders = "2" //1男孩，2女孩
 	//公历生日，年月日时分
-	year   = "2018"
-	month  = "10"
-	day    = "5"
-	hour   = "8"
-	minute = "00"
+	year  = "2016"
+	month = "10"
+	day   = "5"
 )
 
 func main() {
 
-	datas := make([]NameInfo, 10)
-
+	start := time.Now().Unix()
+	fmt.Printf("start time:%d", start)
 	//proxy,如果不用，可以直接注释tr中的proxy选项
-	proxy, _ := url.Parse("http://127.0.0.1:22222")
+	proxy, _ := url.Parse("http://10.80.18.1:3128")
 	tr := &http.Transport{
 		Proxy:           http.ProxyURL(proxy),
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
@@ -41,23 +38,41 @@ func main() {
 		Timeout:   time.Second * 10, //超时时间
 	}
 
+	datas := make(chan NameInfo, 10)
+
+	go syncNameInfoToFile(datas)
+
 	waterNames := getWaterWords()
 	cys := getChangyongWords()
 	for _, water := range waterNames {
 		for _, cy := range cys {
-			nameInfo := meimingteng(client, string(water)+string(cy))
-			if nameInfo != nil {
-				datas = append(datas, nameInfo.(NameInfo))
-			}
-			nameInfo1 := meimingteng(client, string(cy)+string(water))
-			if nameInfo1 != nil {
-				datas = append(datas, nameInfo1.(NameInfo))
+			if strings.Trim(string(water), " ") != "" && strings.Trim(string(cy), " ") != "" {
+				nameInfo := meimingteng(client, string(water)+string(cy))
+				if nameInfo != nil {
+					datas <- nameInfo.(NameInfo)
+				}
+
+				nameInfo1 := meimingteng(client, string(cy)+string(water))
+				if nameInfo1 != nil {
+					datas <- nameInfo1.(NameInfo)
+				}
 			}
 		}
 	}
-	sort.Sort(NameInfoSlice(datas))
-	for _, data := range datas {
-		appendFile(data.name + " " + strconv.Itoa(data.scope) + "\n")
+	//close the channel
+	close(datas)
+	end := time.Now().Unix()
+	fmt.Printf("end time:%d,cost time:%d", end, end-start)
+}
+
+func syncNameInfoToFile(datas <-chan NameInfo) {
+	now := time.Now().Unix()
+	filename := fmt.Sprintf("result_%d.txt", now)
+	file, _ := os.OpenFile(filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	defer file.Close()
+	file.WriteString("名字  文化 五行 生肖 五格 分数\n")
+	for data := range datas {
+		file.WriteString(data.name + " " + strconv.Itoa(data.wenhua) + " " + strconv.Itoa(data.wuxing) + " " + strconv.Itoa(data.shengxiao) + " " + strconv.Itoa(data.wuge) + " " + strconv.Itoa(data.scope) + "\n")
 	}
 }
 
@@ -146,19 +161,23 @@ func meimingteng(client *http.Client, name string) interface{} {
 	shengxiao := doc.Find("#bdAppSummDiv > table:nth-child(7) > tbody > tr > td > font:nth-child(9) > b").Text()
 	wuge := doc.Find("#bdAppSummDiv > table:nth-child(7) > tbody > tr > td > font:nth-child(13) > b").Text()
 
-	fmt.Println(xing+name, wenhua, wuxing, shengxiao, wuge)
+	//fmt.Println(xing+name, wenhua, wuxing, shengxiao, wuge)
 
 	wenhuaI, _ := strconv.Atoi(wenhua)
 	wuxingI, _ := strconv.Atoi(wuxing)
 	shengxiaoI, _ := strconv.Atoi(shengxiao)
 	wugeI, _ := strconv.Atoi(wuge)
 
-	return NameInfo{name: xing + name, scope: (wenhuaI + wuxingI + shengxiaoI + wugeI) / 4}
+	return NameInfo{name: xing + name, wenhua: wenhuaI, wuxing: wuxingI, shengxiao: shengxiaoI, wuge: wugeI, scope: (wenhuaI + wuxingI + shengxiaoI + wugeI) / 4}
 }
 
 type NameInfo struct {
-	name  string
-	scope int
+	name      string
+	wenhua    int
+	wuxing    int
+	shengxiao int
+	wuge      int
+	scope     int
 }
 
 //排序使用
